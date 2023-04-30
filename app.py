@@ -1,9 +1,12 @@
 from flask import Flask, request, jsonify, session
+from flask_cors import CORS
 import mysql.connector
 from flask_bcrypt import Bcrypt
 from functools import wraps
 
+
 app = Flask(__name__)
+CORS(app)
 app.secret_key = 'Viernesgarage3103+'
 bcrypt = Bcrypt(app)
 
@@ -33,6 +36,10 @@ def login_required(f):
 def signup():
     data = request.get_json()
 
+    dni = data['dni']
+    nombre = data['nombre']
+    cbu = data['cbu']
+    address = data['address']
     username = data['username']
     password = data['password']
 
@@ -44,11 +51,21 @@ def signup():
         # Insertar el nuevo usuario en la base de datos
         cursor.execute("INSERT INTO usuarios (username, password) VALUES (%s, %s)", (username, hashed_password))
         db_connection.commit()
+
+        # Obtener el ID del usuario recién creado
+        cursor.execute("SELECT LAST_INSERT_ID();")
+        user_id = cursor.fetchone()[0]
+
+        # Insertar los datos del cliente en la tabla de clientes
+        cursor.execute("INSERT INTO clientes (user_id, dni, nombre, cbu, address, usuario) VALUES (%s, %s, %s, %s, %s, %s)",
+                       (user_id, dni, nombre, cbu, address, username))
+
+        db_connection.commit()
+
         return jsonify({"status": "success", "message": "Usuario registrado exitosamente."})
     except Exception as e:
         db_connection.rollback()
         return jsonify({"status": "error", "message": "Error al registrar el usuario. Detalle: {}".format(str(e))})
-
 
 
 
