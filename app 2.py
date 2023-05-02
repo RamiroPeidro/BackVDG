@@ -1,14 +1,14 @@
 from flask import Flask, request, jsonify, session
-from flask_cors import CORS
 import mysql.connector
 from flask_bcrypt import Bcrypt
 from functools import wraps
 
+app = Flask(__name__)
+bcrypt = Bcrypt(app)
+app.secret_key = 'Viernesgarage3103+'
+
 
 app = Flask(__name__)
-CORS(app)
-app.secret_key = 'Viernesgarage3103+'
-bcrypt = Bcrypt(app)
 
 
 db_connection = mysql.connector.connect(
@@ -32,58 +32,9 @@ def login_required(f):
 
 
 
-@app.route('/signup', methods=['POST'])
-def signup():
-    data = request.get_json()
-
-    dni = data['dni']
-    nombre = data['nombre']
-    cbu = data['cbu']
-    address = data['address']
-    username = data['username']
-    password = data['password']
-
-    # Cifrar la contraseña antes de guardarla en la base de datos
-    hashed_password = bcrypt.generate_password_hash(password.encode('utf-8'))
-    print('hashed en singup: ', hashed_password)
-
-    cursor = db_connection.cursor()
-    try:
-        # Insertar el nuevo usuario en la base de datos
-        cursor.execute("INSERT INTO usuarios (username, password) VALUES (%s, %s)", (username, hashed_password))
-        db_connection.commit()
-
-        # Obtener el ID del usuario recién creado
-        cursor.execute("SELECT LAST_INSERT_ID();")
-        user_id = cursor.fetchone()[0]
-
-        # Insertar los datos del cliente en la tabla de clientes
-        cursor.execute("INSERT INTO clientes (user_id, dni, nombre, cbu, address, usuario) VALUES (%s, %s, %s, %s, %s, %s)",
-                       (user_id, dni, nombre, cbu, address, username))
-
-        db_connection.commit()
-
-        return jsonify({"status": "success", "message": "Usuario registrado exitosamente."})
-    except Exception as e:
-        db_connection.rollback()
-        return jsonify({"status": "error", "message": "Error al registrar el usuario. Detalle: {}".format(str(e))})
-
-
-
-@app.route('/usuarios', methods=['GET'])
-@login_required
-def usuarios():
-    cursor = db_connection.cursor()
-    
-    cursor.execute("SELECT * FROM usuarios")
-    rows = cursor.fetchall()
-    column_names = [desc[0] for desc in cursor.description]
-    result = [dict(zip(column_names, row)) for row in rows]
-    return jsonify(result)
-
 
 @app.route('/clientes', methods=['GET', 'POST', 'PUT', 'DELETE'])
-@login_required
+# @login_required
 def clientes():
     cursor = db_connection.cursor()
     
@@ -95,7 +46,6 @@ def clientes():
         result = [dict(zip(column_names, row)) for row in rows]
         return jsonify(result)
 
-    # cambiar estos metodos para ageregar el campo nuevo
     elif request.method == 'POST':
         # Agregar un nuevo cliente a la base de datos
         data = request.get_json()
@@ -123,16 +73,14 @@ def clientes():
 @app.route('/login', methods=['POST'])
 def login():
     data = request.get_json()
-    print("data:", data)
     username = data['username']
     password = data['password']
-    print("pass hasheada:", password)
 
     cursor = db_connection.cursor()
     cursor.execute("SELECT * FROM usuarios WHERE username=%s", (username,))
     user = cursor.fetchone()
 
-    if user and bcrypt.check_password_hash(user[2], password.encode('utf-8')):
+    if user and bcrypt.check_password_hash(user[2], password):
         # Iniciar sesión del usuario
         session['user_id'] = user[0]
         session['username'] = user[1]
@@ -145,10 +93,9 @@ def login():
 @app.route('/logout', methods=['POST'])
 @login_required
 def logout():
-    session.clear()
-    # session.pop('user_id', None)
-    # session.pop('username', None)
-    # session.pop('role', None)
+    session.pop('user_id', None)
+    session.pop('username', None)
+    session.pop('role', None)
     return jsonify({"status": "success", "message": "Sesión cerrada con éxito."})
 
 
