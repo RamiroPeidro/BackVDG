@@ -1,15 +1,33 @@
 from flask import Flask, request, jsonify, session
-from flask_cors import CORS
+from flask_cors import CORS, cross_origin
 import mysql.connector
 from flask_bcrypt import Bcrypt
 from functools import wraps
-
+import os
 
 app = Flask(__name__)
-CORS(app)
+CORS(app, origins=['http://localhost:3000'], supports_credentials=True)
+app.config['SESSION_COOKIE_DOMAIN'] = 'http://localhost:3000'
 app.secret_key = 'Viernesgarage3103+'
 bcrypt = Bcrypt(app)
 
+app.config.update(
+    SESSION_COOKIE_SAMESITE="None", 
+    SESSION_COOKIE_ENABLED=True
+)
+app.config['SESSION_COOKIE_DOMAIN'] = None
+
+# user = os.environ['DB_USER']
+# password = os.environ['DB_PASSWORD']
+# host = os.environ['DB_HOST']
+# database = os.environ['DB_NAME']
+
+# db_connection = mysql.connector.connect(
+#     host=host,
+#     user=user,
+#     password=password,
+#     database=database
+# )
 
 db_connection = mysql.connector.connect(
     host="localhost",
@@ -19,7 +37,38 @@ db_connection = mysql.connector.connect(
 )
 
 def is_authenticated():
+    for u in session:
+        print(u)
     return 'user_id' in session
+
+def fetch_data(query):
+    cursor = db_connection.cursor()
+    cursor.execute(query)
+    rows = cursor.fetchall()
+    column_names = [desc[0] for desc in cursor.description]
+    result = [dict(zip(column_names, row)) for row in rows]
+    return jsonify(result)
+
+def handle_post_put(method):
+    data = request.get_json()
+    cursor = db_connection.cursor()
+    if method == 'POST':
+        cursor.execute("INSERT INTO clientes (user_id, dni, nombre, cbu, address, username) VALUES (%s, %s, %s, %s, %s, %s)",
+                       (data['user_id'], data['dni'], data['nombre'], data['cbu'], data['address'], data['username']))
+        db_connection.commit()
+        return jsonify({"status": "success", "message": "Cliente creado con éxito."})
+    elif method == 'PUT':
+        cursor.execute("UPDATE clientes SET user_id=%s, nombre=%s, cbu=%s, address=%s, username=%s WHERE dni=%s",
+                       (data['user_id'], data['nombre'], data['cbu'], data['address'], data['username'], data['dni']))
+        db_connection.commit()
+        return jsonify({"status": "success", "message": "Cliente actualizado con éxito."})
+
+def handle_delete():
+    dni = request.args.get('dni')
+    cursor = db_connection.cursor()
+    cursor.execute("DELETE FROM clientes WHERE dni=%s", (dni,))
+    db_connection.commit()
+    return jsonify({"status": "success", "message": "Cliente eliminado con éxito."})
 
 
 def login_required(f):
@@ -30,37 +79,25 @@ def login_required(f):
         return f(*args, **kwargs)
     return decorated_function
 
-
-
 @app.route('/signup', methods=['POST'])
+@cross_origin(supports_credentials=True)
 def signup():
     data = request.get_json()
 
-    dni = data['dni']
-    nombre = data['nombre']
-    cbu = data['cbu']
-    address = data['address']
-    username = data['username']
-    password = data['password']
-
-    # Cifrar la contraseña antes de guardarla en la base de datos
-    hashed_password = bcrypt.generate_password_hash(password.encode('utf-8'))
-    print('hashed en singup: ', hashed_password)
-
-    cursor = db_connection.cursor()
     try:
-        # Insertar el nuevo usuario en la base de datos
-        cursor.execute("INSERT INTO usuarios (username, password) VALUES (%s, %s)", (username, hashed_password))
+        dni, nombre, cbu, address, username, password, mnemonic = data.values()
+
+        hashed_password = bcrypt.generate_password_hash(password.encode('utf-8'))
+
+        cursor = db_connection.cursor()
+        cursor.execute("INSERT INTO usuarios (username, password, mnemonic) VALUES (%s, %s, %s)", (username, hashed_password, mnemonic))
         db_connection.commit()
 
-        # Obtener el ID del usuario recién creado
         cursor.execute("SELECT LAST_INSERT_ID();")
         user_id = cursor.fetchone()[0]
 
-        # Insertar los datos del cliente en la tabla de clientes
         cursor.execute("INSERT INTO clientes (user_id, dni, nombre, cbu, address, usuario) VALUES (%s, %s, %s, %s, %s, %s)",
                        (user_id, dni, nombre, cbu, address, username))
-
         db_connection.commit()
 
         return jsonify({"status": "success", "message": "Usuario registrado exitosamente."})
@@ -68,93 +105,48 @@ def signup():
         db_connection.rollback()
         return jsonify({"status": "error", "message": "Error al registrar el usuario. Detalle: {}".format(str(e))})
 
-
-
 @app.route('/usuarios', methods=['GET'])
-@login_required
+@cross_origin(supports_credentials=True)
 def usuarios():
-    cursor = db_connection.cursor()
-    
-    cursor.execute("SELECT * FROM usuarios")
-    rows = cursor.fetchall()
-    column_names = [desc[0] for desc in cursor.description]
-    result = [dict(zip(column_names, row)) for row in rows]
-    return jsonify(result)
-
+    return fetch_data("SELECT * FROM usuarios")
 
 @app.route('/clientes', methods=['GET', 'POST', 'PUT', 'DELETE'])
+@cross_origin(supports_credentials=True)
 @login_required
 def clientes():
-    cursor = db_connection.cursor()
-    
     if request.method == 'GET':
-        # Obtener datos del cliente de la base de datos y devolver como JSON
-        cursor.execute("SELECT * FROM clientes")
-        rows = cursor.fetchall()
-        column_names = [desc[0] for desc in cursor.description]
-        result = [dict(zip(column_names, row)) for row in rows]
-        return jsonify(result)
-
-    # cambiar estos metodos para ageregar el campo nuevo
-    elif request.method == 'POST':
-        # Agregar un nuevo cliente a la base de datos
-        data = request.get_json()
-        cursor.execute("INSERT INTO clientes (DNI, NOMBRE, CBU, ADDRESS) VALUES (%s, %s, %s, %s)",
-                       (data['DNI'], data['NOMBRE'], data['CBU'], data['ADDRESS']))
-        db_connection.commit()
-        return jsonify({"status": "success", "message": "Cliente creado con éxito."})
-
-    elif request.method == 'PUT':
-        # Actualizar los datos de un cliente existente
-        data = request.get_json()
-        cursor.execute("UPDATE clientes SET NOMBRE=%s, CBU=%s, ADDRESS=%s WHERE DNI=%s",
-                       (data['NOMBRE'], data['CBU'], data['ADDRESS'], data['DNI']))
-        db_connection.commit()
-        return jsonify({"status": "success", "message": "Cliente actualizado con éxito."})
-
+        return fetch_data("SELECT * FROM clientes")
+    elif request.method in ['POST', 'PUT']:
+        return handle_post_put(request.method)
     elif request.method == 'DELETE':
-        # Eliminar un cliente de la base de datos
-        dni = request.args.get('dni')
-        cursor.execute("DELETE FROM clientes WHERE DNI=%s", (dni,))
-        db_connection.commit()
-        return jsonify({"status": "success", "message": "Cliente eliminado con éxito."})
-
+        return handle_delete()
 
 @app.route('/login', methods=['POST'])
+@cross_origin(supports_credentials=True)
 def login():
     data = request.get_json()
-    print("data:", data)
     username = data['username']
     password = data['password']
-    print("pass hasheada:", password)
 
     cursor = db_connection.cursor()
-    cursor.execute("SELECT * FROM usuarios WHERE username=%s", (username,))
+    cursor.execute("SELECT id, username, password, role, mnemonic FROM usuarios WHERE username=%s", (username,))
     user = cursor.fetchone()
 
     if user and bcrypt.check_password_hash(user[2], password.encode('utf-8')):
-        # Iniciar sesión del usuario
         session['user_id'] = user[0]
         session['username'] = user[1]
         session['role'] = user[3]
+        session['mnemonic'] = user[4]
         return jsonify({"status": "success", "message": "Inicio de sesión exitoso."})
     else:
         return jsonify({"status": "error", "message": "Nombre de usuario o contraseña incorrectos."})
 
-
 @app.route('/logout', methods=['POST'])
-@login_required
+@cross_origin(supports_credentials=True)
 def logout():
     session.clear()
-    # session.pop('user_id', None)
-    # session.pop('username', None)
-    # session.pop('role', None)
     return jsonify({"status": "success", "message": "Sesión cerrada con éxito."})
-
-
 
 if __name__ == "__main__":
     app.run(debug=True)
-
-
 
